@@ -1,0 +1,52 @@
+name: Inverted index experiment
+on:
+  push:
+    paths-ignore:
+      - 'README.md'
+      - 'evidence/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  experiment:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    env:
+      HADOOP_VERSION: 3.4.1
+      HADOOP_HOME: /opt/hadoop
+      LAB_STATE: /tmp/lab2-hadoop-state
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack experiment source
+        run: unzip -q source.zip -d lab
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+      - name: Download and verify Apache Hadoop
+        run: |
+          base="https://archive.apache.org/dist/hadoop/common/hadoop-$HADOOP_VERSION"
+          curl --fail --location --retry 3 --max-time 300 -o /tmp/hadoop.tar.gz "$base/hadoop-$HADOOP_VERSION.tar.gz"
+          curl --fail --location --retry 3 --max-time 60 -o /tmp/hadoop.sha512 "$base/hadoop-$HADOOP_VERSION.tar.gz.sha512"
+          expected=$(grep -Eo '[0-9a-fA-F]{128}' /tmp/hadoop.sha512 | head -1)
+          test -n "$expected"
+          echo "$expected  /tmp/hadoop.tar.gz" | sha512sum --check
+          sudo tar -xzf /tmp/hadoop.tar.gz -C /opt
+          sudo ln -s "/opt/hadoop-$HADOOP_VERSION" "$HADOOP_HOME"
+      - name: Execute HDFS and YARN inverted index experiment
+        run: bash scripts/run_experiment.sh
+        working-directory: lab
+      - name: Collect logs and compiled program
+        if: always()
+        working-directory: lab
+        run: |
+          mkdir -p results
+          cp build/lab2.jar results/ 2>/dev/null || true
+          cp -a "$LAB_STATE/logs" results/daemon-logs 2>/dev/null || true
+          cp -a "$LAB_STATE/nm-logs" results/container-logs 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lab2-evidence
+          path: lab/results/
+          retention-days: 90
